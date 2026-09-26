@@ -77,6 +77,12 @@ class BatchRegistry:
 
     def open(self, batch_id: str, product: str, *, reason: str) -> BatchRecord:
         label = validate_token(batch_id, field_name="batch id")
+        if label in self._batches:
+            raise DuplicateError(
+                "batch id has already been used",
+                batch=label,
+                state=self._batches[label].state,
+            )
         live = self.active()
         if live is not None:
             raise StateError("another batch is still open", batch=live.batch_id, state=live.state)
@@ -104,7 +110,7 @@ class BatchRegistry:
         record = BatchRecord(
             batch_id=current.batch_id,
             product=current.product,
-            state=OPEN,
+            state=CLOSED,
             opened_at=current.opened_at,
             closed_at=self.clock.timestamp(),
             outcome=validate_token(outcome, field_name="outcome"),
@@ -129,6 +135,8 @@ class BatchRegistry:
 
     def batches(self, *, state: str | None = None, product: str | None = None, limit: int = 50) -> list[BatchRecord]:
         selected = [self._batches[key] for key in sorted(self._batches)]
+        if state is not None:
+            selected = [record for record in selected if record.state == str(state)]
         if product is not None:
             selected = [record for record in selected if record.product == str(product)]
         return selected[-max(0, int(limit)) :]
