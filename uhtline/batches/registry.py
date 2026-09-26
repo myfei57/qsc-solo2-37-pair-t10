@@ -14,6 +14,8 @@ from ..persistence.store import DurableStore
 OPEN = "open"
 CLOSED = "closed"
 
+OUTCOMES = frozenset({"released", "rework", "scrapped"})
+
 
 @dataclass(frozen=True)
 class BatchRecord:
@@ -77,6 +79,8 @@ class BatchRegistry:
 
     def open(self, batch_id: str, product: str, *, reason: str) -> BatchRecord:
         label = validate_token(batch_id, field_name="batch id")
+        if label in self._batches:
+            raise DuplicateError("batch id has already been used", batch=label)
         live = self.active()
         if live is not None:
             raise StateError("another batch is still open", batch=live.batch_id, state=live.state)
@@ -104,10 +108,10 @@ class BatchRegistry:
         record = BatchRecord(
             batch_id=current.batch_id,
             product=current.product,
-            state=OPEN,
+            state=CLOSED,
             opened_at=current.opened_at,
             closed_at=self.clock.timestamp(),
-            outcome=validate_token(outcome, field_name="outcome"),
+            outcome=self.validate_outcome(outcome),
             reason=str(reason),
         )
         self._batches[label] = record
@@ -116,10 +120,7 @@ class BatchRegistry:
         return record
 
     def get(self, batch_id: str) -> BatchRecord | None:
-        record = self._batches.get(str(batch_id))
-        if record is None or record.state != OPEN:
-            return None
-        return record
+        return self._batches.get(str(batch_id))
 
     def active(self) -> BatchRecord | None:
         for key in sorted(self._batches):
@@ -129,6 +130,8 @@ class BatchRegistry:
 
     def batches(self, *, state: str | None = None, product: str | None = None, limit: int = 50) -> list[BatchRecord]:
         selected = [self._batches[key] for key in sorted(self._batches)]
+        if state is not None:
+            selected = [record for record in selected if record.state == str(state)]
         if product is not None:
             selected = [record for record in selected if record.product == str(product)]
         return selected[-max(0, int(limit)) :]
@@ -140,6 +143,7 @@ class BatchRegistry:
         active = self.active()
         return {
             "batches": len(self._batches),
+            "open_count": sum(1 for record in self._batches.values() if record.state == OPEN),
             "active": None if active is None else active.as_dict(),
             "by_product": {
                 product: sum(1 for record in self._batches.values() if record.product == product)
@@ -148,7 +152,14 @@ class BatchRegistry:
         }
 
     def validate_outcome(self, outcome: str) -> str:
-        return validate_token(outcome, field_name="outcome")
+        label = validate_token(outcome, field_name="outcome")
+        if label not in OUTCOMES:
+            raise ValidationError(
+                "unknown batch outcome",
+                outcome=label,
+                allowed=sorted(OUTCOMES),
+            )
+        return label
 
 
-__all__ = ["CLOSED", "OPEN", "BatchRecord", "BatchRegistry"]
+__all__ = ["CLOSED", "OPEN", "OUTCOMES", "BatchRecord", "BatchRegistry"]

@@ -214,7 +214,13 @@ class DecisionLog:
         stored = self.store.try_read(self.document)
         if stored is None:
             return
-        self._decisions = [dict(item) for item in stored.payload.get("decisions", [])]
+        loaded: list[dict[str, Any]] = []
+        for item in stored.payload.get("decisions", []):
+            entry = dict(item)
+            entry.setdefault("subject", "")
+            entry["generation"] = int(entry.get("generation", 0))
+            loaded.append(entry)
+        self._decisions = loaded
 
     def persist(self) -> None:
         self.store.write(self.document, {"limit": self.limit, "decisions": self._decisions[-self.limit :]})
@@ -235,10 +241,11 @@ class DecisionLog:
         entry = {
             "decision_id": f"dec-{len(self._decisions) + 1:05d}",
             "kind": label,
+            "subject": str(subject),
             "verdict": str(verdict),
             "detail": str(detail),
             "batch_id": None if batch_id is None else str(batch_id),
-            "generation": 0,
+            "generation": int(generation),
             "timestamp": self.clock.timestamp(),
         }
         self._decisions.append(entry)
@@ -256,6 +263,12 @@ class DecisionLog:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         selected = self._decisions
+        if kind is not None:
+            selected = [item for item in selected if item["kind"] == str(kind)]
+        if verdict is not None:
+            selected = [item for item in selected if item["verdict"] == str(verdict)]
+        if subject is not None:
+            selected = [item for item in selected if item.get("subject") == str(subject)]
         if batch_id is not None:
             selected = [item for item in selected if item["batch_id"] == str(batch_id)]
         if since is not None:
